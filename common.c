@@ -893,7 +893,7 @@ fetch_ssl(conn_t *conn, const struct url *URL, int verbose)
 #define FETCH_READ_DONE		 0
 
 #ifdef WITH_SSL
-static ssize_t
+ssize_t
 fetch_ssl_read(SSL *ssl, char *buf, size_t len)
 {
 	ssize_t rlen;
@@ -911,6 +911,12 @@ fetch_ssl_read(SSL *ssl, char *buf, size_t len)
 		}
 	}
 	return (rlen);
+}
+
+static ssize_t
+fetch_ssl_write(SSL *ssl, char *buf, size_t len)
+{
+	return (SSL_write(ssl, buf, len));
 }
 #endif
 
@@ -972,7 +978,7 @@ fetch_read(conn_t *conn, char *buf, size_t len)
 		 */
 #ifdef WITH_SSL
 		if (conn->ssl != NULL)
-			rlen = fetch_ssl_read(conn->ssl, buf, len);
+			rlen = fetch_ssl_read_wrapper(conn->ssl, buf, len);
 		else
 #endif
 			rlen = fetch_socket_read(conn->sd, buf, len);
@@ -1112,8 +1118,8 @@ fetch_writev(conn_t *conn, struct iovec *iov, int iovcnt)
 		errno = 0;
 #ifdef WITH_SSL
 		if (conn->ssl != NULL)
-			wlen = SSL_write(conn->ssl,
-			    iov->iov_base, iov->iov_len);
+			/*wlen = SSL_write(conn->ssl, iov->iov_base, iov->iov_len);*/
+			wlen = fetch_ssl_write(conn->ssl, iov->iov_base, iov->iov_len);
 		else
 #endif
 			wlen = writev(conn->sd, iov, iovcnt);

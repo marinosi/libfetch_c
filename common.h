@@ -57,6 +57,7 @@ struct fetchconn {
 	SSL_CTX		*ssl_ctx;	/* SSL context */
 	X509		*ssl_cert;	/* server certificate */
 	const SSL_METHOD *ssl_meth;	/* SSL method */
+	int		ssl_on;		/* Flag to indicate that SSL is "established" */
 #endif
 	int		 ref;		/* reference count */
 };
@@ -82,8 +83,11 @@ conn_t		*fetch_reopen(int);
 conn_t		*fetch_ref(conn_t *);
 #ifdef WITH_SSL
 int		 fetch_ssl_cb_verify_crt(int, X509_STORE_CTX*);
+ssize_t  fetch_ssl_read(SSL *, char *, size_t);
+int	fetch_ssl(conn_t *, const struct url *, int);
+int		 fetch_ssl_wrapper(conn_t *, const struct url *, int);
+ssize_t fetch_ssl_read_wrapper(SSL *ssl, char *buf, size_t buflen);
 #endif
-int		 fetch_ssl(conn_t *, const struct url *, int);
 ssize_t		 fetch_read(conn_t *, char *, size_t);
 int		 fetch_getln(conn_t *);
 ssize_t		 fetch_write(conn_t *, const char *, size_t);

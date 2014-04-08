@@ -1,10 +1,11 @@
 # $FreeBSD: stable/10/lib/libfetch/Makefile 240496 2012-09-14 13:00:43Z des $
 
 .include <bsd.own.mk>
+MK_SSL_SANDBOX := yes
 
 LIB=		fetch
 CFLAGS+=	-I.
-SRCS=		fetch.c common.c ftp.c http.c file.c \
+SRCS=		fetch.c common.c ssl_sandbox.c ftp.c http.c file.c \
 		ftperr.h httperr.h
 INCS=		fetch.h
 MAN=		fetch.3
@@ -18,6 +19,13 @@ CFLAGS+=	-DINET6
 CFLAGS+=	-DWITH_SSL
 DPADD=		${LIBSSL} ${LIBCRYPTO}
 LDADD=		-lssl -lcrypto
+.if ${MK_SSL_SANDBOX} != "no"
+CFLAGS+=	-I/root/git/libsep
+DPADD+=		${LIBSEP}
+LDADD+=		-L/root/git/libsep -lsep
+.else
+CFLAGS+=	-DNO_SANDBOX
+.endif
 .else
 DPADD=		${LIBMD}
 LDADD=		-lmd
