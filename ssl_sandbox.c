@@ -49,7 +49,6 @@
 
 #include "fetch.h"
 #include "common.h"
-#include "ssl_sandbox_internal.h"
 
 /* DPRINTF */
 #ifdef DEBUG
@@ -63,6 +62,9 @@
 #define MMIN(a, b) ((a) < (b) ? (a) : (b))
 
 #ifndef NO_SANDBOX
+
+/* Sandbox return value */
+int rv;
 
 conn_t sconn; /* Global conn_t control block for the SSL sandbox */
 int ssl_initialized = 0;
