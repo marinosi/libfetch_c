@@ -90,7 +90,7 @@ struct ssl_read_args {
 
 struct ssl_write_args {
 	size_t len;
-	char wbuf[PAGE_SIZE];
+	char wbuf[0];
 } __packed;
 
 struct ssl_req {
@@ -136,58 +136,6 @@ fetch_sandbox_wait(void)
 	DPRINTF("Sandbox's exit status is %d", WEXITSTATUS(rv));
 }
 
-/* Called in parent to proxy the request though the sandbox */
-/*
- * We do not need to pass the SSL handle as it already exists in the persistent
- * sandbox process from the SSL_INIT phase.
- */
-static ssize_t
-fetch_ssl_read_insandbox(char *buf, size_t rlen)
-{
-	struct ssl_req req;
-	struct ssl_rep rep;
-	struct iovec iov_req, iov_rep;
-	uint32_t opno, seqno;
-	u_char *buffer;
-	size_t len;
-
-	/* Clear out req */
-	bzero(&req, sizeof(req));
-
-	/* Update the needed data */
-	req.type = SSL_READ;
-	req.rargs.len =  rlen;
-
-	seqno = 0;
-
-	iov_req.iov_base = &req;
-	iov_req.iov_len = sizeof(req);
-
-	/*
-	 * Ask the SSL sandbox to read rlen bytes from the SSL handle.
-	 */
-	if (host_sendrpc(fscb, SSL_READ, seqno, &iov_req, 1, NULL, 0) < 0)
-		err(-1, "host_sendrpc");
-
-	if (host_recvrpc(fscb, &opno, &seqno,  &buffer, &len) < 0) {
-		if (errno == EPIPE) {
-			DPRINTF("[XXX] EPIPE");
-			exit(-1);
-		} else if ( (opno != SSL_READ) || (seqno != 0)) {
-			DPRINTF("[XXX] Wrong operation or sequence number!");
-			exit(-1);
-		} else {
-			DPRINTF("[XXX] sandbox_recvrpc");
-			err(-1, "sandbox_recvrpc");
-		}
-	}
-
-	/* Clone the buffer from the RPC library */
-	memmove(buf, buffer, MMIN(len, rlen));
-
-	free(buffer);
-	return (MMIN(len,rlen));
-}
 
 static int
 fetch_ssl_insandbox(conn_t *conn, const struct url *URL, int verbose)
@@ -233,10 +181,149 @@ fetch_ssl_insandbox(conn_t *conn, const struct url *URL, int verbose)
 	return (rep.retval);
 }
 
+/* Called in parent to proxy the request though the sandbox */
+/*
+ * We do not need to pass the SSL handle as it already exists in the persistent
+ * sandbox process from the SSL_INIT phase.
+ */
+static ssize_t
+fetch_ssl_read_insandbox(char *buf, size_t rlen)
+{
+	struct ssl_req req;
+	struct ssl_rep *rep;
+	struct iovec iov_req, iov_rep;
+	uint32_t opno, seqno;
+	u_char *buffer;
+	size_t len;
+
+	/* Clear out req */
+	bzero(&req, sizeof(req));
+
+	/* Update the needed data */
+	req.type = SSL_READ;
+	req.rargs.len = rlen;
+
+	seqno = 0;
+
+	iov_req.iov_base = &req;
+	iov_req.iov_len = sizeof(req);
+
+	/*DPRINTF("==> [Parent] Request to read %u bytes", rlen);*/
+	/*
+	 * Ask the SSL sandbox to read rlen bytes from the SSL handle.
+	 */
+	if (host_sendrpc(fscb, SSL_READ, seqno, &iov_req, 1, NULL, 0) < 0)
+		err(-1, "host_sendrpc");
+
+	if (host_recvrpc(fscb, &opno, &seqno,  &buffer, &len) < 0) {
+		if (errno == EPIPE) {
+			DPRINTF("[XXX] EPIPE");
+			exit(-1);
+		} else if ( (opno != SSL_READ) || (seqno != 0)) {
+			DPRINTF("[XXX] Wrong operation or sequence number!");
+			exit(-1);
+		} else {
+			DPRINTF("[XXX] sandbox_recvrpc");
+			err(-1, "sandbox_recvrpc");
+		}
+	}
+
+	rep = (struct ssl_rep *) buffer;
+
+	/* Clone the buffer from the RPC library */
+	if(rep->rbuf_len > 0)
+		memmove(buf, &rep->rbuf, rep->rbuf_len);
+
+
+	free(buffer);
+	return (rep->retval);
+}
+
+/* Called in parent to proxy the request though the sandbox */
+/*
+ * We do not need to pass the SSL handle as it already exists in the persistent
+ * sandbox process from the SSL_INIT phase.
+ */
+static ssize_t
+fetch_ssl_write_insandbox(char *buf, size_t rlen)
+{
+	struct ssl_req *req;
+	struct ssl_rep *rep;
+	struct iovec iov_req;
+	uint32_t opno, seqno;
+	u_char *buffer;
+	size_t len, req_msg_size, ret;
+
+	/* Clear out req */
+
+	req_msg_size = sizeof(*req) + rlen - 1;
+	req = calloc(1, req_msg_size);
+	if (!req) {
+		DPRINTF("[XXX] calloc() failed!");
+		exit(-1);
+	}
+	req->type = SSL_WRITE;
+	req->wargs.len = rlen;
+	memmove(req->wargs.wbuf, buf, rlen);
+
+	/*DPRINTF("==> [Parent] Request to write buffer: %s\n", req->wargs.wbuf);*/
+	seqno = 0;
+
+	iov_req.iov_base = req;
+	iov_req.iov_len = sizeof(*req);
+
+	/*
+	 * Ask the SSL sandbox to read rlen bytes from the SSL handle.
+	 */
+	if (host_sendrpc(fscb, SSL_WRITE, seqno, &iov_req, 1, NULL, 0) < 0)
+		err(-1, "host_sendrpc");
+
+	if (host_recvrpc(fscb, &opno, &seqno,  &buffer, &len) < 0) {
+		if (errno == EPIPE) {
+			DPRINTF("[XXX] EPIPE");
+			exit(-1);
+		} else if ( (opno != SSL_WRITE) || (seqno != 0)) {
+			DPRINTF("[XXX] Wrong operation or sequence number!");
+			exit(-1);
+		} else {
+			DPRINTF("[XXX] sandbox_recvrpc");
+			err(-1, "sandbox_recvrpc");
+		}
+	}
+	
+	if (len != sizeof(*rep)) {
+		err(-1, "fetch_ssl_write_insandbox received msg len %zu", len);
+		return (-1);
+	}
+
+	rep = (struct ssl_rep *) buffer;
+	ret = rep->retval;
+
+	free(buffer);
+	return (ret);
+}
+
+static void
+fetch_ssl_shutdown_insandbox(void)
+{
+	uint32_t seqno = 0;
+
+	/*
+	 * Ask the SSL sandbox to close the SSL handle and terminate.
+	 * We do not expect anything back.
+	 */
+	if (host_sendrpc(fscb, SSL_SHUTDOWN, seqno, NULL, 0, NULL, 0) < 0)
+		err(-1, "host_sendrpc");
+
+	/* XXX IM: Wait for the sandbox to terminate? */
+
+}
+
+/* -------------------------------------------------------------------------- */
 /* Called in sandbox and wraps the actual fetch_ssl */
 static void
 sandbox_fetch_ssl(struct sandbox_cb *scb, uint32_t opno, uint32_t seqno, char
-	*buffer, size_t len, int sockfd)
+	*buffer, size_t len, int *sockfd)
 {
 	struct ssl_req req;
 	struct ssl_rep rep;
@@ -245,9 +332,11 @@ sandbox_fetch_ssl(struct sandbox_cb *scb, uint32_t opno, uint32_t seqno, char
 	if (len != sizeof(req))
 		err(-1, "sandbox_fetch: len %zu", len);
 
+	if (sockfd)
+		sconn.sd = dup(*sockfd);
+
 	/* Demangle data */
 	memmove(&req, buffer, sizeof(req));
-	sconn.sd = dup(sockfd);
 
 	/* Type should be set correctly */
 	if (req.type != SSL_INIT)
@@ -270,11 +359,13 @@ sandbox_fetch_ssl_read(struct sandbox_cb *scb, uint32_t opno, uint32_t seqno, ch
 	struct ssl_req req;
 	struct ssl_rep *rep;
 	struct iovec iov;
-	char *tmp;
-	size_t tmpsize, rlen, rep_msg_size;
+	size_t rep_msg_size;
+	ssize_t rlen;
 
-	if (len != sizeof(req))
-		err(-1, "sandbox_fetch: len %zu", len);
+	if (len != sizeof(req)) {
+		err(-1, "sandbox_fetch_ssl_read: received msg len %zu", len);
+		return;
+	}
 
 	/* Demangle data */
 	memmove(&req, buffer, sizeof(req));
@@ -283,14 +374,19 @@ sandbox_fetch_ssl_read(struct sandbox_cb *scb, uint32_t opno, uint32_t seqno, ch
 	if (req.type != SSL_READ)
 		return;
 
-	rep_msg_size = sizeof(*rep) + req.rargs.len - 1;
+
+	/*DPRINTF("==> [Sandbox] Received request to read %u bytes", req.rargs.len);*/
+	rep_msg_size = sizeof(*rep);
+	if(req.rargs.len)
+		rep_msg_size += req.rargs.len;
+
 	rep = malloc(rep_msg_size);
 	if(!rep) {
 		DPRINTF("[XXX] malloc() failed");
 		exit(-1);
 	}
 	rep->type = SSL_READ;
-	rlen = fetch_ssl_read(sconn.ssl, rep->rbuf, req.rargs.len);
+	rlen = fetch_ssl_read(sconn.ssl, &rep->rbuf[0], req.rargs.len);
 	rep->retval = rep->rbuf_len = rlen;
 
 	iov.iov_base = rep;
@@ -302,6 +398,33 @@ sandbox_fetch_ssl_read(struct sandbox_cb *scb, uint32_t opno, uint32_t seqno, ch
 	free(rep);
 }
 
+/* Called in sandbox and wraps the actual fetch_ssl_read */
+static void
+sandbox_fetch_ssl_write(struct sandbox_cb *scb, uint32_t opno, uint32_t seqno, char
+	*buffer, size_t len)
+{
+	struct ssl_req *req;
+	struct ssl_rep rep;
+	struct iovec iov;
+
+	if (len < sizeof(*req)) {
+		err(-1, "sandbox_fetch_ssl_read: received msg len %zu", len);
+		return;
+	}
+
+	req = (struct ssl_req *) buffer;
+	if(req->type != SSL_WRITE)
+		return;
+
+	/*DPRINTF("==> [Sandbox] Received request to write buf: %s\n", req->wargs.wbuf);*/
+	rep.retval = fetch_ssl_write(sconn.ssl, req->wargs.wbuf, req->wargs.len);
+
+	iov.iov_base = &rep;
+	iov.iov_len = sizeof(rep);
+	if (sandbox_sendrpc(scb, opno, seqno, &iov, 1) < 0)
+		err(-1, "sandbox_sendrpc");
+}
+
 static void
 ssl_sandbox(void)
 {
@@ -309,19 +432,27 @@ ssl_sandbox(void)
 	u_char *buffer;
 	size_t len;
 	int fdarray[1], fdcount; /* We expect a fd for SSL_INIT op */
+	int *fdp;
 	int ssl_shutdown = 0;
 
 	DPRINTF("===> In ssl_sandbox()");
 
+	ssl_initialized = 0;
 	while (!ssl_shutdown) {
 		/* No SSL initialized on top of established conn */
-		if (!ssl_initialized)
+		if (!ssl_initialized) {
+			DPRINTF("\tSSL not initialized!");
+			fdp = fdarray;
 			fdcount = 1; /* we are waiting for a fd */
-		else
+		}
+		else {
+			/*DPRINTF("\tSSL is already initialized!");*/
+			fdp = NULL;
 			fdcount = 0; /* SSL is already initialized -- no need for fd */
+		}
 
 		/* Get the output fd and URL from parent */
-		if (sandbox_recvrpc_rights(fscb, &opno, &seqno,  &buffer, &len, fdarray,
+		if (sandbox_recvrpc_rights(fscb, &opno, &seqno,  &buffer, &len, fdp,
 			&fdcount) < 0) {
 			if (errno == EPIPE) {
 				DPRINTF("[XXX] EPIPE");
@@ -336,16 +467,23 @@ ssl_sandbox(void)
 		switch(opno) {
 		case SSL_INIT:
 			/* fetch the url and return */
+			DPRINTF("[OP] SSL INITIALIZATION");
 			sandbox_fetch_ssl(fscb, opno, seqno, (char *)buffer, len,
-				fdarray[0]);
+				&fdarray[0]);
+			close(fdarray[0]);
 			ssl_initialized = 1;
 			break;
 		case SSL_READ:
+			/*DPRINTF("[OP] SSL READ");*/
 			sandbox_fetch_ssl_read(fscb, opno, seqno, (char *) buffer, len);
 			break;
 		case SSL_WRITE:
+			/*DPRINTF("[OP] SSL WRITE");*/
+			sandbox_fetch_ssl_write(fscb, opno, seqno, (char *) buffer, len);
 			break;
 		case SSL_SHUTDOWN:
+			DPRINTF("[OP] SSL SHUTDOWN");
+			fetch_ssl_shutdown(&sconn);
 			ssl_shutdown = 1;
 			break;
 		default:
@@ -368,6 +506,7 @@ fetch_ssl_wrapper(conn_t *conn, const struct url *URL, int verbose)
 #ifdef NO_SANDBOX
 	return (fetch_ssl(conn, URL, verbose));
 #else
+	fetch_sandbox_init();
 	return (fetch_ssl_insandbox(conn, URL, verbose));
 #endif
 }
@@ -376,8 +515,29 @@ ssize_t
 fetch_ssl_read_wrapper(SSL *ssl, char *buf, size_t buflen)
 {
 #ifdef NO_SANDBOX
-	return (fetch_ssl(ssl, buf, buflen));
+	return (fetch_ssl_read(ssl, buf, buflen));
 #else
 	return (fetch_ssl_read_insandbox(buf, buflen));
+#endif
+}
+
+ssize_t
+fetch_ssl_write_wrapper(SSL *ssl, char *buf, size_t buflen)
+{
+#ifdef NO_SANDBOX
+	return (fetch_ssl_write(ssl, buf, buflen));
+#else
+	return (fetch_ssl_write_insandbox(buf, buflen));
+#endif
+}
+
+void
+fetch_ssl_shutdown_wrapper(conn_t *conn)
+{
+#ifdef NO_SANDBOX
+	fetch_ssl_shutdown(conn);
+#else
+	fetch_ssl_shutdown_insandbox();
+	conn->ssl_on = 0;
 #endif
 }

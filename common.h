@@ -81,12 +81,17 @@ int		 fetch_bind(int, int, const char *);
 conn_t		*fetch_connect(const char *, int, int, int);
 conn_t		*fetch_reopen(int);
 conn_t		*fetch_ref(conn_t *);
+int	fetch_ssl(conn_t *, const struct url *, int);
+int	 fetch_ssl_wrapper(conn_t *, const struct url *, int);
 #ifdef WITH_SSL
 int		 fetch_ssl_cb_verify_crt(int, X509_STORE_CTX*);
 ssize_t  fetch_ssl_read(SSL *, char *, size_t);
-int	fetch_ssl(conn_t *, const struct url *, int);
-int		 fetch_ssl_wrapper(conn_t *, const struct url *, int);
-ssize_t fetch_ssl_read_wrapper(SSL *ssl, char *buf, size_t buflen);
+ssize_t  fetch_ssl_write(SSL *, char *, size_t);
+ssize_t fetch_ssl_read_wrapper(SSL *, char *, size_t);
+ssize_t  fetch_ssl_write_wrapper(SSL *, char *, size_t);
+ssize_t fetch_ssl_read_wrapper(SSL *, char *, size_t);
+void fetch_ssl_shutdown(conn_t *);
+void fetch_ssl_shutdown_wrapper(conn_t *);
 #endif
 ssize_t		 fetch_read(conn_t *, char *, size_t);
 int		 fetch_getln(conn_t *);

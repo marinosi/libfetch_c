@@ -913,11 +913,31 @@ fetch_ssl_read(SSL *ssl, char *buf, size_t len)
 	return (rlen);
 }
 
-static ssize_t
+ssize_t
 fetch_ssl_write(SSL *ssl, char *buf, size_t len)
 {
 	return (SSL_write(ssl, buf, len));
 }
+
+void
+fetch_ssl_shutdown(conn_t *conn)
+{
+	if (conn->ssl) {
+		SSL_shutdown(conn->ssl);
+		SSL_set_connect_state(conn->ssl);
+		SSL_free(conn->ssl);
+		conn->ssl = NULL;
+	}
+	if (conn->ssl_ctx) {
+		SSL_CTX_free(conn->ssl_ctx);
+		conn->ssl_ctx = NULL;
+	}
+	if (conn->ssl_cert) {
+		X509_free(conn->ssl_cert);
+		conn->ssl_cert = NULL;
+	}
+}
+
 #endif
 
 static ssize_t
@@ -977,7 +997,11 @@ fetch_read(conn_t *conn, char *buf, size_t len)
 		 * slightly) when reading small amounts of data.
 		 */
 #ifdef WITH_SSL
+#ifdef NO_SANDBOX
 		if (conn->ssl != NULL)
+#else
+		if (conn->ssl_on)
+#endif /* NO_SANDBOX */
 			rlen = fetch_ssl_read_wrapper(conn->ssl, buf, len);
 		else
 #endif
@@ -1117,9 +1141,13 @@ fetch_writev(conn_t *conn, struct iovec *iov, int iovcnt)
 		}
 		errno = 0;
 #ifdef WITH_SSL
+#ifdef NO_SANDBOX
 		if (conn->ssl != NULL)
+#else
+		if (conn->ssl_on)
+#endif /*NO_SANDBOX*/
 			/*wlen = SSL_write(conn->ssl, iov->iov_base, iov->iov_len);*/
-			wlen = fetch_ssl_write(conn->ssl, iov->iov_base, iov->iov_len);
+			wlen = fetch_ssl_write_wrapper(conn->ssl, iov->iov_base, iov->iov_len);
 		else
 #endif
 			wlen = writev(conn->sd, iov, iovcnt);
@@ -1185,20 +1213,12 @@ fetch_close(conn_t *conn)
 	if (--conn->ref > 0)
 		return (0);
 #ifdef WITH_SSL
-	if (conn->ssl) {
-		SSL_shutdown(conn->ssl);
-		SSL_set_connect_state(conn->ssl);
-		SSL_free(conn->ssl);
-		conn->ssl = NULL;
-	}
-	if (conn->ssl_ctx) {
-		SSL_CTX_free(conn->ssl_ctx);
-		conn->ssl_ctx = NULL;
-	}
-	if (conn->ssl_cert) {
-		X509_free(conn->ssl_cert);
-		conn->ssl_cert = NULL;
-	}
+#ifdef NO_SANDBOX
+	if (conn->ssl != NULL)
+#else
+	if (conn->ssl_on)
+#endif /* NO_SANDBOX */
+		fetch_ssl_shutdown_wrapper(conn);
 #endif
 	ret = close(conn->sd);
 	free(conn->buf);
