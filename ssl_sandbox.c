@@ -208,7 +208,6 @@ fetch_ssl_read_insandbox(char *buf, size_t rlen)
 	iov_req.iov_base = &req;
 	iov_req.iov_len = sizeof(req);
 
-	/*DPRINTF("==> [Parent] Request to read %u bytes", rlen);*/
 	/*
 	 * Ask the SSL sandbox to read rlen bytes from the SSL handle.
 	 */
@@ -266,7 +265,6 @@ fetch_ssl_write_insandbox(char *buf, size_t rlen)
 	req->wargs.len = rlen;
 	memmove(req->wargs.wbuf, buf, rlen);
 
-	/*DPRINTF("==> [Parent] Request to write buffer: %s\n", req->wargs.wbuf);*/
 	seqno = 0;
 
 	iov_req.iov_base = req;
@@ -375,7 +373,6 @@ sandbox_fetch_ssl_read(struct sandbox_cb *scb, uint32_t opno, uint32_t seqno, ch
 		return;
 
 
-	/*DPRINTF("==> [Sandbox] Received request to read %u bytes", req.rargs.len);*/
 	rep_msg_size = sizeof(*rep);
 	if(req.rargs.len)
 		rep_msg_size += req.rargs.len;
@@ -386,7 +383,7 @@ sandbox_fetch_ssl_read(struct sandbox_cb *scb, uint32_t opno, uint32_t seqno, ch
 		exit(-1);
 	}
 	rep->type = SSL_READ;
-	rlen = fetch_ssl_read(sconn.ssl, &rep->rbuf[0], req.rargs.len);
+	rlen = fetch_ssl_read(sconn.ssl, rep->rbuf, req.rargs.len);
 	rep->retval = rep->rbuf_len = rlen;
 
 	iov.iov_base = rep;
@@ -416,7 +413,6 @@ sandbox_fetch_ssl_write(struct sandbox_cb *scb, uint32_t opno, uint32_t seqno, c
 	if(req->type != SSL_WRITE)
 		return;
 
-	/*DPRINTF("==> [Sandbox] Received request to write buf: %s\n", req->wargs.wbuf);*/
 	rep.retval = fetch_ssl_write(sconn.ssl, req->wargs.wbuf, req->wargs.len);
 
 	iov.iov_base = &rep;
